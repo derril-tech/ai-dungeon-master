@@ -1,0 +1,457 @@
+name: CI Pipeline
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main, develop]
+
+env:
+  NODE_VERSION: '18'
+  PYTHON_VERSION: '3.11'
+
+jobs:
+  # Frontend (Next.js) CI
+  frontend-ci:
+    name: Frontend CI
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+          cache-dependency-path: apps/frontend/package-lock.json
+          
+      - name: Install dependencies
+        working-directory: apps/frontend
+        run: npm ci
+        
+      - name: Run linting
+        working-directory: apps/frontend
+        run: npm run lint
+        
+      - name: Run type checking
+        working-directory: apps/frontend
+        run: npm run type-check
+        
+      - name: Run unit tests
+        working-directory: apps/frontend
+        run: npm run test:unit
+        
+      - name: Run E2E tests
+        working-directory: apps/frontend
+        run: npm run test:e2e
+        
+      - name: Build application
+        working-directory: apps/frontend
+        run: npm run build
+        
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: frontend-build
+          path: apps/frontend/.next
+          retention-days: 7
+
+  # Gateway (NestJS) CI
+  gateway-ci:
+    name: Gateway CI
+    runs-on: ubuntu-latest
+    
+    services:
+      postgres:
+        image: postgres:15
+        env:
+          POSTGRES_PASSWORD: password
+          POSTGRES_DB: test_db
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 5432:5432
+          
+      redis:
+        image: redis:7-alpine
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 6379:6379
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+          cache-dependency-path: apps/gateway/package-lock.json
+          
+      - name: Install dependencies
+        working-directory: apps/gateway
+        run: npm ci
+        
+      - name: Run linting
+        working-directory: apps/gateway
+        run: npm run lint
+        
+      - name: Run type checking
+        working-directory: apps/gateway
+        run: npm run type-check
+        
+      - name: Run unit tests
+        working-directory: apps/gateway
+        run: npm run test:unit
+        
+      - name: Run integration tests
+        working-directory: apps/gateway
+        run: npm run test:integration
+        env:
+          DATABASE_URL: postgresql://postgres:password@localhost:5432/test_db
+          REDIS_URL: redis://localhost:6379
+          
+      - name: Run security audit
+        working-directory: apps/gateway
+        run: npm audit --audit-level moderate
+        
+      - name: Build application
+        working-directory: apps/gateway
+        run: npm run build
+        
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: gateway-build
+          path: apps/gateway/dist
+          retention-days: 7
+
+  # Orchestrator (FastAPI) CI
+  orchestrator-ci:
+    name: Orchestrator CI
+    runs-on: ubuntu-latest
+    
+    services:
+      postgres:
+        image: postgres:15
+        env:
+          POSTGRES_PASSWORD: password
+          POSTGRES_DB: test_db
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 5432:5432
+          
+      redis:
+        image: redis:7-alpine
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 6379:6379
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        
+      - name: Setup Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          
+      - name: Cache pip dependencies
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-${{ hashFiles('apps/orchestrator/requirements.txt') }}
+          restore-keys: |
+            ${{ runner.os }}-pip-
+            
+      - name: Install dependencies
+        working-directory: apps/orchestrator
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install -r requirements-dev.txt
+          
+      - name: Run linting
+        working-directory: apps/orchestrator
+        run: |
+          flake8 app tests
+          black --check app tests
+          isort --check-only app tests
+          
+      - name: Run type checking
+        working-directory: apps/orchestrator
+        run: mypy app
+        
+      - name: Run unit tests
+        working-directory: apps/orchestrator
+        run: pytest tests/unit -v --cov=app --cov-report=xml
+        
+      - name: Run integration tests
+        working-directory: apps/orchestrator
+        run: pytest tests/integration -v
+        env:
+          DATABASE_URL: postgresql://postgres:password@localhost:5432/test_db
+          REDIS_URL: redis://localhost:6379
+          
+      - name: Run security scan
+        working-directory: apps/orchestrator
+        run: |
+          bandit -r app -f json -o bandit-report.json || true
+          safety check
+          
+      - name: Upload coverage reports
+        uses: codecov/codecov-action@v3
+        with:
+          file: apps/orchestrator/coverage.xml
+          flags: orchestrator
+          name: orchestrator-coverage
+
+  # Workers CI
+  workers-ci:
+    name: Workers CI
+    runs-on: ubuntu-latest
+    
+    services:
+      postgres:
+        image: postgres:15
+        env:
+          POSTGRES_PASSWORD: password
+          POSTGRES_DB: test_db
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 5432:5432
+          
+      redis:
+        image: redis:7-alpine
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 6379:6379
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        
+      - name: Setup Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          
+      - name: Cache pip dependencies
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-${{ hashFiles('apps/workers/requirements.txt') }}
+          restore-keys: |
+            ${{ runner.os }}-pip-
+            
+      - name: Install dependencies
+        working-directory: apps/workers
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install -r requirements-dev.txt
+          
+      - name: Run linting
+        working-directory: apps/workers
+        run: |
+          flake8 app tests
+          black --check app tests
+          isort --check-only app tests
+          
+      - name: Run type checking
+        working-directory: apps/workers
+        run: mypy app
+        
+      - name: Run unit tests
+        working-directory: apps/workers
+        run: pytest tests/unit -v --cov=app --cov-report=xml
+        
+      - name: Run integration tests
+        working-directory: apps/workers
+        run: pytest tests/integration -v
+        env:
+          DATABASE_URL: postgresql://postgres:password@localhost:5432/test_db
+          REDIS_URL: redis://localhost:6379
+          
+      - name: Upload coverage reports
+        uses: codecov/codecov-action@v3
+        with:
+          file: apps/workers/coverage.xml
+          flags: workers
+          name: workers-coverage
+
+  # SDK CI
+  sdk-ci:
+    name: SDK CI
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+          cache-dependency-path: packages/sdk/package-lock.json
+          
+      - name: Install dependencies
+        working-directory: packages/sdk
+        run: npm ci
+        
+      - name: Run linting
+        working-directory: packages/sdk
+        run: npm run lint
+        
+      - name: Run type checking
+        working-directory: packages/sdk
+        run: npm run type-check
+        
+      - name: Run unit tests
+        working-directory: packages/sdk
+        run: npm run test
+        
+      - name: Build package
+        working-directory: packages/sdk
+        run: npm run build
+        
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: sdk-build
+          path: packages/sdk/dist
+          retention-days: 7
+
+  # Security scanning
+  security-scan:
+    name: Security Scan
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        
+      - name: Run Trivy vulnerability scanner
+        uses: aquasecurity/trivy-action@master
+        with:
+          scan-type: 'fs'
+          scan-ref: '.'
+          format: 'sarif'
+          output: 'trivy-results.sarif'
+          
+      - name: Upload Trivy scan results
+        uses: github/codeql-action/upload-sarif@v2
+        with:
+          sarif_file: 'trivy-results.sarif'
+          
+      - name: Run OWASP ZAP scan
+        uses: zaproxy/action-full-scan@v0.8.0
+        with:
+          target: 'http://localhost:3000'
+          
+      - name: Run dependency check
+        uses: dependency-check/Dependency-Check_Action@main
+        with:
+          project: 'AI Dungeon Master'
+          path: '.'
+          format: 'HTML'
+          out: 'reports'
+
+  # Load testing
+  load-test:
+    name: Load Test
+    runs-on: ubuntu-latest
+    needs: [frontend-ci, gateway-ci, orchestrator-ci]
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        
+      - name: Setup k6
+        uses: grafana/k6-action@v0.3.0
+        with:
+          filename: load-tests/load-test.js
+          
+      - name: Run load tests
+        run: k6 run load-tests/load-test.js
+        env:
+          K6_OUT: influxdb=http://localhost:8086/k6
+
+  # Docker build and test
+  docker-build:
+    name: Docker Build
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+        
+      - name: Build and test Docker images
+        run: |
+          docker-compose -f docker-compose.dev.yml build
+          docker-compose -f docker-compose.dev.yml up -d
+          sleep 30
+          docker-compose -f docker-compose.dev.yml down
+          
+      - name: Run container security scan
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: 'ai-dungeon-master-frontend:latest'
+          format: 'sarif'
+          output: 'container-scan.sarif'
+
+  # Deploy to staging (on main branch)
+  deploy-staging:
+    name: Deploy to Staging
+    runs-on: ubuntu-latest
+    needs: [frontend-ci, gateway-ci, orchestrator-ci, workers-ci, sdk-ci, security-scan]
+    if: github.ref == 'refs/heads/main'
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        
+      - name: Download build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          
+      - name: Deploy to staging environment
+        run: |
+          echo "Deploying to staging environment..."
+          # Add deployment logic here
+          
+      - name: Run smoke tests
+        run: |
+          echo "Running smoke tests on staging..."
+          # Add smoke test logic here

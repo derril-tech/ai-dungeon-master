@@ -1,0 +1,48 @@
+{
+  "name": "ai-dungeon-master",
+  "version": "0.1.0",
+  "description": "Multi-agent tabletop RPG engine with AI Dungeon Master",
+  "private": true,
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "dev": "docker-compose -f docker-compose.dev.yml up",
+    "dev:build": "docker-compose -f docker-compose.dev.yml up --build",
+    "dev:down": "docker-compose -f docker-compose.dev.yml down",
+    "dev:logs": "docker-compose -f docker-compose.dev.yml logs -f",
+    "install:all": "npm install && npm run install:frontend && npm run install:gateway && npm run install:sdk",
+    "install:frontend": "cd apps/frontend && npm install",
+    "install:gateway": "cd apps/gateway && npm install",
+    "install:sdk": "cd packages/sdk && npm install",
+    "build:all": "npm run build:frontend && npm run build:gateway && npm run build:sdk",
+    "build:frontend": "cd apps/frontend && npm run build",
+    "build:gateway": "cd apps/gateway && npm run build",
+    "build:sdk": "cd packages/sdk && npm run build",
+    "lint:all": "npm run lint:frontend && npm run lint:gateway && npm run lint:sdk",
+    "lint:frontend": "cd apps/frontend && npm run lint",
+    "lint:gateway": "cd apps/gateway && npm run lint",
+    "lint:sdk": "cd packages/sdk && npm run lint",
+    "test:all": "npm run test:frontend && npm run test:gateway && npm run test:sdk",
+    "test:frontend": "cd apps/frontend && npm run test",
+    "test:gateway": "cd apps/gateway && npm run test",
+    "test:sdk": "cd packages/sdk && npm run test",
+    "clean": "npm run clean:frontend && npm run clean:gateway && npm run clean:sdk",
+    "clean:frontend": "cd apps/frontend && rm -rf .next node_modules",
+    "clean:gateway": "cd apps/gateway && rm -rf dist node_modules",
+    "clean:sdk": "cd packages/sdk && rm -rf dist node_modules"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "typescript": "^5.2.0",
+    "prettier": "^3.0.0",
+    "eslint": "^8.0.0"
+  },
+  "engines": {
+    "node": ">=18.0.0",
+    "npm": ">=8.0.0"
+  },
+  "author": "AI Dungeon Master Team",
+  "license": "MIT"
+}
